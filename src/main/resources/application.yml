@@ -1,0 +1,59 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: kb-server
+  
+  datasource:
+    url: jdbc:mysql://localhost:3306/kb_database?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+        format_sql: true
+  
+  redis:
+    host: localhost
+    port: 6379
+    password: 
+    timeout: 60000
+    database: 0
+  
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+  
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:your-api-key}
+      model: gpt-3.5-turbo
+
+logging:
+  level:
+    root: INFO
+    com.kb: DEBUG
+  file:
+    name: logs/kb-server.log
+    max-size: 10MB
+    max-history: 10
+
+kb:
+  upload:
+    path: /data/uploads
+    allowed-types: pdf,txt,docx,xlsx,md
+  rag:
+    chunk-size: 1000
+    overlap: 200
+    similarity-threshold: 0.7
+    top-k: 5
