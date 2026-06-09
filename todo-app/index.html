@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>待办事项应用 - To-Do List App</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app" class="container">
+        <header class="header">
+            <h1>📝 我的待办事项</h1>
+            <p class="subtitle">Stay organized and productive</p>
+        </header>
+
+        <main class="main-content">
+            <!-- 输入区域 -->
+            <div class="input-section">
+                <div class="input-wrapper">
+                    <input 
+                        type="text" 
+                        id="todoInput" 
+                        class="todo-input" 
+                        placeholder="添加新的待办事项..." 
+                        maxlength="100"
+                    >
+                    <button id="addBtn" class="add-btn">
+                        <span>+</span> 添加
+                    </button>
+                </div>
+                <div class="input-info">
+                    <span id="charCount">0/100</span> 字符
+                </div>
+            </div>
+
+            <!-- 过滤选项 -->
+            <div class="filter-section">
+                <button class="filter-btn active" data-filter="all">
+                    全部 (<span id="countAll">0</span>)
+                </button>
+                <button class="filter-btn" data-filter="active">
+                    进行中 (<span id="countActive">0</span>)
+                </button>
+                <button class="filter-btn" data-filter="completed">
+                    已完成 (<span id="countCompleted">0</span>)
+                </button>
+            </div>
+
+            <!-- 待办列表 -->
+            <div class="todos-container">
+                <ul id="todoList" class="todo-list">
+                    <!-- 待办项目将动态插入这里 -->
+                </ul>
+                <div id="emptyState" class="empty-state">
+                    <div class="empty-icon">🎯</div>
+                    <p>还没有待办事项</p>
+                    <small>添加一个新任务开始吧！</small>
+                </div>
+            </div>
+
+            <!-- 操作栏 -->
+            <div class="action-bar">
+                <div class="stats">
+                    <span class="stat-item">
+                        总数: <strong id="totalCount">0</strong>
+                    </span>
+                    <span class="stat-item">
+                        完成率: <strong id="completionRate">0%</strong>
+                    </span>
+                </div>
+                <div class="action-buttons">
+                    <button id="clearCompletedBtn" class="action-btn secondary" title="删除所有已完成的项目">
+                        清空已完成
+                    </button>
+                    <button id="clearAllBtn" class="action-btn danger" title="删除所有项目">
+                        全部清空
+                    </button>
+                </div>
+            </div>
+
+            <!-- 存储信息 -->
+            <div class="storage-info">
+                <span id="storageStatus">✓ 本地存储已启用</span>
+                <button id="exportBtn" class="export-btn" title="导出数据为JSON">导出</button>
+                <button id="importBtn" class="import-btn" title="从JSON导入数据">导入</button>
+                <input type="file" id="importFile" accept=".json" style="display: none;">
+            </div>
+        </main>
+
+        <!-- 通知提示 -->
+        <div id="notification" class="notification"></div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
