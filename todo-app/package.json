@@ -1,0 +1,21 @@
+{
+  "name": "todo-app",
+  "version": "1.0.0",
+  "description": "一个功能完整的待办事项应用，支持本地存储",
+  "author": "cyd-ys",
+  "license": "MIT",
+  "files": [
+    "index.html",
+    "styles.css",
+    "app.js",
+    "README.md"
+  ],
+  "keywords": [
+    "todo",
+    "todo-list",
+    "task-manager",
+    "local-storage",
+    "javascript",
+    "webapp"
+  ]
+}
