@@ -7,6 +7,8 @@ import com.kb.dto.QueryResponse;
 import com.kb.service.RagService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -48,11 +50,7 @@ public class RagServiceImpl implements RagService {
 
     private static final String OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
 
-    private File indexFile() {
-        File dir = new File(uploadPath);
-        if (!dir.exists()) dir.mkdirs();
-        return new File(dir, "index.json");
-    }
+
 
     @Override
     public String uploadAndIndexDocument(MultipartFile file) throws Exception {
@@ -71,22 +69,20 @@ public class RagServiceImpl implements RagService {
         String content = extractTextFromFile(file);
         List<String> chunks = chunkDocument(content, chunkSize, overlap);
 
-        // load existing index
-        JSONArray index = loadIndex();
-
+        List<Document> documents = new ArrayList<>();
         for (int i = 0; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
-            double[] emb = getEmbedding(chunk);
-            JSONObject item = new JSONObject();
-            item.put("id", UUID.randomUUID().toString());
-            item.put("file", out.getName());
-            item.put("text", chunk);
-            item.put("embedding", emb);
-            index.add(item);
+            String docId = UUID.randomUUID().toString();
+            
+            Map<String, Object> metadata = new HashMap<>();
+            metadata.put("file", out.getName());
+            metadata.put("chunk_index", i);
+            
+            documents.add(new Document(docId, chunk, metadata));
         }
 
-        saveIndex(index);
-
+        vectorStore.add(documents);
+        
         log.info("文件索引完成: {}，生成 {} 个知识块", filename, chunks.size());
         return "文件上传成功，已生成 " + chunks.size() + " 个知识块";
     }
@@ -95,32 +91,20 @@ public class RagServiceImpl implements RagService {
     public QueryResponse query(String question) {
         long start = System.currentTimeMillis();
         try {
-            double[] qEmb = getEmbedding(question);
-
-            JSONArray index = loadIndex();
-            List<JSONObject> items = new ArrayList<>();
-            for (int i = 0; i < index.size(); i++) items.add(index.getJSONObject(i));
-
-            // compute similarities
-            List<QueryResult> results = new ArrayList<>();
-            for (JSONObject it : items) {
-                double[] emb = it.getObject("embedding", double[].class);
-                double score = cosineSimilarity(qEmb, emb);
-                results.add(new QueryResult(it, score));
-            }
-
-            results.sort((a, b) -> Double.compare(b.score, a.score));
-
-            int topK = 5;
-            List<QueryResult> top = results.stream().limit(topK).collect(Collectors.toList());
-
+            List<Document> results = vectorStore.similaritySearch(question);
+            
             StringBuilder context = new StringBuilder();
             List<QueryResponse.SourceDocument> sources = new ArrayList<>();
-            for (QueryResult r : top) {
-                JSONObject it = r.item;
-                context.append(it.getString("text")).append("\n---\n");
+            
+            for (Document doc : results) {
+                context.append(doc.getContent()).append("\n---\n");
+                
                 QueryResponse.SourceDocument sd = new QueryResponse.SourceDocument(
-                        it.getString("id"), it.getString("file"), it.getString("text"), r.score);
+                    doc.getId(),
+                    doc.getMetadata().get("file").toString(),
+                    doc.getContent(),
+                    doc.getEmbedding() != null ? doc.getEmbedding().similarity(question) : 0.0
+                );
                 sources.add(sd);
             }
 
@@ -148,9 +132,8 @@ public class RagServiceImpl implements RagService {
     @Override
     public Map<String, Object> getStatistics() {
         Map<String, Object> stats = new HashMap<>();
-        JSONArray index = loadIndex();
         stats.put("totalDocuments", new File(uploadPath).listFiles() == null ? 0 : new File(uploadPath).listFiles().length);
-        stats.put("totalChunks", index.size());
+        stats.put("totalChunks", vectorStore.getDocumentCount());
         stats.put("lastUpdated", System.currentTimeMillis());
         return stats;
     }
@@ -186,57 +169,17 @@ public class RagServiceImpl implements RagService {
         return chunks;
     }
 
-    private JSONArray loadIndex() {
-        try {
-            File idx = indexFile();
-            if (!idx.exists()) return new JSONArray();
-            String s = java.nio.file.Files.readString(idx.toPath(), StandardCharsets.UTF_8);
-            return JSON.parseArray(s);
-        } catch (Exception e) {
-            log.warn("读取索引失败，返回空索引", e);
-            return new JSONArray();
+
+
+    @Autowired
+    private EmbeddingClient embeddingClient;
+
+    private double[] getEmbedding(String text) {
+        List<Double> embedding = embeddingClient.embed(text);
+        double[] vec = new double[embedding.size()];
+        for (int i = 0; i < embedding.size(); i++) {
+            vec[i] = embedding.get(i);
         }
-    }
-
-    private void saveIndex(JSONArray index) {
-        try {
-            File idx = indexFile();
-            java.nio.file.Files.writeString(idx.toPath(), index.toString(), StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            log.error("保存索引失败", e);
-        }
-    }
-
-    private double[] getEmbedding(String text) throws Exception {
-        String apiKey = System.getenv("OPENAI_API_KEY");
-        if (apiKey == null || apiKey.isEmpty()) {
-            // 回退：使用基于 SHA-256 的确定性局部向量（避免外部依赖，便于本地调试）
-            return deterministicEmbedding(text, 1536);
-        }
-
-        JSONObject body = new JSONObject();
-        body.put("model", OPENAI_EMBEDDING_MODEL);
-        body.put("input", text);
-
-        HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create("https://api.openai.com/v1/embeddings"))
-                .timeout(Duration.ofSeconds(20))
-                .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + apiKey)
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                .build();
-
-        HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-        if (resp.statusCode() / 100 != 2) {
-            throw new Exception("Embedding 调用失败: " + resp.body());
-        }
-
-        JSONObject jo = JSON.parseObject(resp.body());
-        JSONArray arr = jo.getJSONArray("data");
-        if (arr == null || arr.isEmpty()) throw new Exception("Embedding 返回为空");
-        JSONArray emb = arr.getJSONObject(0).getJSONArray("embedding");
-        double[] vec = new double[emb.size()];
-        for (int i = 0; i < emb.size(); i++) vec[i] = emb.getDouble(i);
         return vec;
     }
 
@@ -284,63 +227,33 @@ public class RagServiceImpl implements RagService {
         return prompt;
     }
 
-    private String callChatCompletion(String prompt) throws Exception {
-        String apiKey = System.getenv("OPENAI_API_KEY");
-        if (apiKey == null || apiKey.isEmpty()) {
-            // 离线回退：从 prompt 中提取 context 并返回简短摘要，便于无网络/无密钥时本地演示
-            try {
-                String context = "";
-                int ctxIdx = prompt.indexOf("Context:\n");
-                if (ctxIdx >= 0) {
-                    int qIdx = prompt.indexOf("\nUser question:\n", ctxIdx);
-                    if (qIdx > ctxIdx) {
-                        context = prompt.substring(ctxIdx + "Context:\n".length(), qIdx);
-                    } else {
-                        context = prompt.substring(ctxIdx + "Context:\n".length());
-                    }
-                } else {
-                    // 如果无法解析，整段 prompt 作为 context
-                    context = prompt;
-                }
-                String collapsed = context.replaceAll("\\s+", " ").trim();
-                if (collapsed.length() > 600) collapsed = collapsed.substring(0, 600) + "...";
-                String answer = "（离线回答）根据提供的上下文，摘要： " + collapsed;
-                return answer;
-            } catch (Exception e) {
-                return "（离线回答）无法生成摘要";
+    @Autowired
+    private ChatClient chatClient;
+
+    @Autowired
+    private VectorStore vectorStore;
+
+    private String callChatCompletion(String prompt) {
+        String system = "You are an assistant that answers user questions based on provided context. Answer concisely and cite sources when appropriate.";
+        
+        // 提取context和question
+        String context = "";
+        String question = prompt;
+        int ctxIdx = prompt.indexOf("Context:\n");
+        if (ctxIdx >= 0) {
+            int qIdx = prompt.indexOf("\nUser question:\n", ctxIdx);
+            if (qIdx > ctxIdx) {
+                context = prompt.substring(ctxIdx + "Context:\n".length(), qIdx);
+                question = prompt.substring(qIdx + "\nUser question:\n".length());
             }
         }
 
-        JSONObject message = new JSONObject();
-        message.put("role", "user");
-        message.put("content", prompt);
-
-        JSONObject body = new JSONObject();
-        body.put("model", openaiModel != null ? openaiModel : "gpt-3.5-turbo");
-        body.put("messages", new JSONArray().fluentAdd(message));
-        body.put("max_tokens", 512);
-
-        HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create("https://api.openai.com/v1/chat/completions"))
-                .timeout(Duration.ofSeconds(30))
-                .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + apiKey)
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                .build();
-
-        HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-        if (resp.statusCode() / 100 != 2) {
-            throw new Exception("Chat API 调用失败: " + resp.body());
-        }
-
-        JSONObject jo = JSON.parseObject(resp.body());
-        JSONArray choices = jo.getJSONArray("choices");
-        if (choices == null || choices.isEmpty()) return "";
-        JSONObject first = choices.getJSONObject(0);
-        JSONObject messageObj = first.getJSONObject("message");
-        if (messageObj == null) return "";
-        return messageObj.getString("content");
-    }
+        Prompt p = new Prompt(new SystemMessage(system), 
+                            new UserMessage(question), 
+                            new AssistantMessage(context));
+        
+        return chatClient.call(p).getResult().getOutput().getContent();
+	                    }
 
     private static class QueryResult {
         JSONObject item;
