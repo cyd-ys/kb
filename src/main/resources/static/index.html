@@ -1,21 +1,167 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>KB Server - 登录访问</title>
-  <style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;color:#222}h1{color:#0b5ed7}code{background:#f1f1f1;padding:2px 6px;border-radius:4px}</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RAG 企业内部知识库问答系统</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background: #f4f6fb; color: #1f2a37; }
+    header { background: linear-gradient(135deg, #2f54eb, #597ef7); color: white; padding: 24px 32px; }
+    header h1 { margin: 0; font-size: 28px; }
+    main { max-width: 1080px; margin: 24px auto; padding: 0 20px; }
+    .card { background: white; border-radius: 12px; box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08); padding: 24px; margin-bottom: 20px; }
+    .section-title { margin: 0 0 16px; font-size: 20px; color: #12263f; }
+    label { display: block; margin: 12px 0 6px; font-weight: 600; }
+    input, textarea, select, button { width: 100%; border: 1px solid #d9d9d9; border-radius: 8px; padding: 12px 14px; font-size: 14px; }
+    textarea { min-height: 120px; resize: vertical; }
+    button { background: #2f54eb; color: white; border: none; cursor: pointer; transition: transform .15s ease; }
+    button:hover { transform: translateY(-1px); }
+    .row { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .result { white-space: pre-wrap; background: #fafbfd; border: 1px solid #e6ecff; padding: 16px; border-radius: 10px; }
+    .small { font-size: 13px; color: #6f7c8a; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #f0f2f5; }
+    th { color: #344767; }
+    .hint { color: #495057; margin: 8px 0 0; }
+  </style>
 </head>
 <body>
-  <h1>KB Server is running</h1>
-  <p>此页面受 Spring Security 保护。请使用账号登录后查看。</p>
-  <p><strong>登录：</strong>用户名 <code>dev</code>，密码 <code>devpass</code></p>
-  <h2>可用 API</h2>
-  <ul>
-    <li>上传文件（POST）: <code>/api/knowledge/upload</code></li>
-    <li>查询（POST）: <code>/api/knowledge/query</code></li>
-    <li>统计（GET）: <code>/api/knowledge/stats</code></li>
-  </ul>
-  <p>示例：在登录后访问 <a href="/api/knowledge/stats">/api/knowledge/stats</a></p>
+  <header>
+    <h1>RAG 企业内部知识库问答系统</h1>
+    <p class="hint">请先登录后访问此页面。登录账户：dev / devpass</p>
+  </header>
+  <main>
+    <div class="card">
+      <p class="section-title">知识库文档上传</p>
+      <form id="uploadForm">
+        <label>选择文件</label>
+        <input type="file" id="fileInput" accept=".pdf,.txt,.doc,.docx,.xls,.xlsx,.md" />
+        <button type="submit">上传并索引</button>
+      </form>
+      <p class="hint">支持 PDF、Word、Excel、TXT、Markdown 文件。</p>
+      <div id="uploadResult" class="result" style="display:none;"></div>
+    </div>
+
+    <div class="card">
+      <p class="section-title">知识库问答</p>
+      <form id="queryForm">
+        <label>问题</label>
+        <textarea id="questionInput" placeholder="请输入你的问题，例如：什么是RAG系统？"></textarea>
+        <div class="row">
+          <div>
+            <label>Top K</label>
+            <select id="topKInput">
+              <option value="3">3</option>
+              <option value="5" selected>5</option>
+              <option value="8">8</option>
+            </select>
+          </div>
+          <div>
+            <label>相似度阈值</label>
+            <select id="thresholdInput">
+              <option value="0.5">0.5</option>
+              <option value="0.7" selected>0.7</option>
+              <option value="0.85">0.85</option>
+            </select>
+          </div>
+        </div>
+        <button type="submit">查询</button>
+      </form>
+      <div id="queryResult" class="result" style="display:none;"></div>
+    </div>
+
+    <div class="card">
+      <p class="section-title">知识库统计</p>
+      <button id="statsBtn">刷新统计</button>
+      <div id="statsResult" class="result" style="display:none;"></div>
+    </div>
+  </main>
+
+  <script>
+    const uploadForm = document.getElementById('uploadForm');
+    const fileInput = document.getElementById('fileInput');
+    const uploadResult = document.getElementById('uploadResult');
+    const queryForm = document.getElementById('queryForm');
+    const questionInput = document.getElementById('questionInput');
+    const topKInput = document.getElementById('topKInput');
+    const thresholdInput = document.getElementById('thresholdInput');
+    const queryResult = document.getElementById('queryResult');
+    const statsBtn = document.getElementById('statsBtn');
+    const statsResult = document.getElementById('statsResult');
+
+    uploadForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (!fileInput.files.length) {
+        alert('请选择要上传的文件。');
+        return;
+      }
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      uploadResult.style.display = 'block';
+      uploadResult.textContent = '正在上传…';
+      try {
+        const resp = await fetch('/api/knowledge/upload', { method: 'POST', body: formData });
+        const text = await resp.text();
+        uploadResult.textContent = resp.ok ? text : '上传失败：' + text;
+      } catch (error) {
+        uploadResult.textContent = '上传错误：' + error.message;
+      }
+    });
+
+    queryForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const question = questionInput.value.trim();
+      if (!question) {
+        alert('请输入查询问题。');
+        return;
+      }
+      queryResult.style.display = 'block';
+      queryResult.textContent = '正在查询…';
+      try {
+        const resp = await fetch('/api/knowledge/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question,
+            topK: parseInt(topKInput.value, 10),
+            similarityThreshold: parseFloat(thresholdInput.value)
+          })
+        });
+        const json = await resp.json();
+        if (!resp.ok) {
+          queryResult.textContent = '查询失败：' + JSON.stringify(json);
+          return;
+        }
+        let html = '问题：' + json.question + '\n\n回答：' + json.answer + '\n\n来源文档：' + json.sourceCount + '\n响应时间：' + json.responseTime + ' ms';
+        if (json.sources && json.sources.length) {
+          html += '\n\n--- 来源 ---\n';
+          json.sources.forEach((source, index) => {
+            html += `${index + 1}. 文件：${source.title} 相似度：${source.similarity.toFixed(3)}\n${source.content}\n\n`;
+          });
+        }
+        queryResult.textContent = html;
+      } catch (error) {
+        queryResult.textContent = '查询错误：' + error.message;
+      }
+    });
+
+    statsBtn.addEventListener('click', async () => {
+      statsResult.style.display = 'block';
+      statsResult.textContent = '正在获取统计信息…';
+      try {
+        const resp = await fetch('/api/knowledge/stats');
+        const json = await resp.json();
+        if (!resp.ok) {
+          statsResult.textContent = '统计获取失败：' + JSON.stringify(json);
+          return;
+        }
+        statsResult.textContent = `上传文件总数：${json.totalDocuments}\n知识块总数：${json.totalChunks}\n更新时间：${new Date(json.lastUpdated).toLocaleString()}`;
+      } catch (error) {
+        statsResult.textContent = '统计错误：' + error.message;
+      }
+    });
+
+    statsBtn.click();
+  </script>
 </body>
 </html>

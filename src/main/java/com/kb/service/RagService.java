@@ -10,6 +10,7 @@ import java.util.Map;
 public interface RagService {
     String uploadAndIndexDocument(MultipartFile file) throws Exception;
     QueryResponse query(String question);
+    QueryResponse query(String question, int topK, double similarityThreshold);
     Map<String, Object> getStatistics();
     void deleteDocument(Long documentId);
     void updateDocumentIndex(Long documentId) throws Exception;

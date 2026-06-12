@@ -86,8 +86,18 @@ file: <binary>
 POST /api/knowledge/query
 Content-Type: application/json
 
-{"question": "什么是RAG系统？"}
+{"question": "什么是RAG系统？", "topK": 5, "similarityThreshold": 0.7}
 ```
+
+### 使用浏览器前端
+登录后访问：
+
+`http://localhost:8080/api/`
+
+页面支持：
+- 文档上传与索引
+- 问答检索
+- 知识库统计
 
 ### 获取统计信息
 ```http

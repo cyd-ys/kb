@@ -7,12 +7,29 @@ import com.kb.dto.QueryResponse;
 import com.kb.service.RagService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.hwpf.HWPFDocument;
+import org.apache.poi.hwpf.extractor.WordExtractor;
+import org.apache.poi.ooxml.POIXMLDocument;
+import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.apache.poi.xwpf.extractor.XWPFWordExtractor;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -32,6 +49,9 @@ public class RagServiceImpl implements RagService {
 
     @Value("${kb.upload.path:uploads}")
     private String uploadPath;
+
+    @Value("${kb.upload.allowed-types:pdf,txt,docx,xlsx,md}")
+    private String uploadAllowedTypes;
 
     @Value("${kb.rag.chunk-size:1000}")
     private int chunkSize;
@@ -93,15 +113,28 @@ public class RagServiceImpl implements RagService {
 
     @Override
     public QueryResponse query(String question) {
+        return query(question, 5, 0.7);
+    }
+
+    @Override
+    public QueryResponse query(String question, int topK, double similarityThreshold) {
         long start = System.currentTimeMillis();
         try {
             double[] qEmb = getEmbedding(question);
 
             JSONArray index = loadIndex();
+            if (index.isEmpty()) {
+                QueryResponse empty = new QueryResponse();
+                empty.setQuestion(question);
+                empty.setAnswer("当前知识库为空，请先上传文档。");
+                empty.setSourceCount(0);
+                empty.setResponseTime(System.currentTimeMillis() - start);
+                return empty;
+            }
+
             List<JSONObject> items = new ArrayList<>();
             for (int i = 0; i < index.size(); i++) items.add(index.getJSONObject(i));
 
-            // compute similarities
             List<QueryResult> results = new ArrayList<>();
             for (JSONObject it : items) {
                 double[] emb = it.getObject("embedding", double[].class);
@@ -110,9 +143,16 @@ public class RagServiceImpl implements RagService {
             }
 
             results.sort((a, b) -> Double.compare(b.score, a.score));
+            topK = Math.max(1, Math.min(topK, 20));
+            double threshold = Math.max(0.0, Math.min(similarityThreshold, 1.0));
 
-            int topK = 5;
-            List<QueryResult> top = results.stream().limit(topK).collect(Collectors.toList());
+            List<QueryResult> top = results.stream()
+                    .filter(r -> r.score >= threshold)
+                    .limit(topK)
+                    .collect(Collectors.toList());
+            if (top.isEmpty()) {
+                top = results.stream().limit(topK).collect(Collectors.toList());
+            }
 
             StringBuilder context = new StringBuilder();
             List<QueryResponse.SourceDocument> sources = new ArrayList<>();
@@ -169,10 +209,86 @@ public class RagServiceImpl implements RagService {
         if (filename == null || filename.isEmpty()) {
             throw new Exception("文件名不能为空");
         }
+        String ext = getExtension(filename);
+        if (ext == null) {
+            throw new Exception("无法识别文件类型");
+        }
+        List<String> allowed = Arrays.stream(uploadAllowedTypes.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(String::toLowerCase)
+                .toList();
+        if (!allowed.contains(ext)) {
+            throw new Exception("不支持此文件类型: " + ext + ". 允许类型: " + String.join(", ", allowed));
+        }
     }
 
     private String extractTextFromFile(MultipartFile file) throws Exception {
-        return new String(file.getBytes(), StandardCharsets.UTF_8);
+        String filename = file.getOriginalFilename();
+        String ext = getExtension(filename);
+        try (InputStream in = file.getInputStream()) {
+            if ("pdf".equals(ext)) {
+                return extractPdfText(in);
+            }
+            if ("doc".equals(ext)) {
+                return extractWordDocText(in);
+            }
+            if ("docx".equals(ext)) {
+                return extractWordDocxText(in);
+            }
+            if ("xls".equals(ext) || "xlsx".equals(ext)) {
+                return extractSpreadsheetText(in);
+            }
+            if ("txt".equals(ext) || "md".equals(ext) || "csv".equals(ext)) {
+                return new String(file.getBytes(), StandardCharsets.UTF_8);
+            }
+            return new String(file.getBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
+    private String getExtension(String filename) {
+        if (filename == null) return null;
+        String ext = StringUtils.getFilenameExtension(filename);
+        return ext != null ? ext.toLowerCase() : null;
+    }
+
+    private String extractPdfText(InputStream in) throws IOException {
+        try (PDDocument document = PDDocument.load(in)) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            return stripper.getText(document);
+        }
+    }
+
+    private String extractWordDocText(InputStream in) throws IOException {
+        try (HWPFDocument doc = new HWPFDocument(in)) {
+            return new WordExtractor(doc).getText();
+        }
+    }
+
+    private String extractWordDocxText(InputStream in) throws IOException {
+        try (XWPFDocument docx = new XWPFDocument(in);
+             XWPFWordExtractor extractor = new XWPFWordExtractor(docx)) {
+            return extractor.getText();
+        }
+    }
+
+    private String extractSpreadsheetText(InputStream in) throws IOException {
+        StringBuilder builder = new StringBuilder();
+        try (Workbook workbook = WorkbookFactory.create(in)) {
+            for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
+                Sheet sheet = workbook.getSheetAt(i);
+                for (Row row : sheet) {
+                    for (Cell cell : row) {
+                        builder.append(cell.toString()).append("\t");
+                    }
+                    builder.append("\n");
+                }
+                builder.append("\n");
+            }
+        } catch (InvalidFormatException e) {
+            throw new IOException("无法解析电子表格文件", e);
+        }
+        return builder.toString();
     }
 
     private List<String> chunkDocument(String content, int chunkSize, int overlap) {
