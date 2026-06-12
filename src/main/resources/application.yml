@@ -4,13 +4,18 @@ server:
     context-path: /api
 
 spring:
+  security:
+    user:
+      name: dev
+      password: devpass
+
   application:
     name: kb-server
   
   datasource:
     url: jdbc:mysql://localhost:3306/kb_database?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: root
-    password: 123456
+    password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
   
   jpa:

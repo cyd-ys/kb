@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>KB Server - 登录访问</title>
+  <style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;color:#222}h1{color:#0b5ed7}code{background:#f1f1f1;padding:2px 6px;border-radius:4px}</style>
+</head>
+<body>
+  <h1>KB Server is running</h1>
+  <p>此页面受 Spring Security 保护。请使用账号登录后查看。</p>
+  <p><strong>登录：</strong>用户名 <code>dev</code>，密码 <code>devpass</code></p>
+  <h2>可用 API</h2>
+  <ul>
+    <li>上传文件（POST）: <code>/api/knowledge/upload</code></li>
+    <li>查询（POST）: <code>/api/knowledge/query</code></li>
+    <li>统计（GET）: <code>/api/knowledge/stats</code></li>
+  </ul>
+  <p>示例：在登录后访问 <a href="/api/knowledge/stats">/api/knowledge/stats</a></p>
+</body>
+</html>

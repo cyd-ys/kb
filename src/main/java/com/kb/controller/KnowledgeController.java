@@ -42,6 +42,39 @@ public class KnowledgeController {
         }
     }
 
+    @GetMapping("/query")
+    public ResponseEntity<QueryResponse> queryGet(@RequestParam("q") String question) {
+        try {
+            QueryResponse response = ragService.query(question);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("查询失败", e);
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    @GetMapping("/query/{question}")
+    public ResponseEntity<QueryResponse> queryPath(@PathVariable("question") String question) {
+        try {
+            QueryResponse response = ragService.query(question);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("查询失败", e);
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    @GetMapping("/query-get")
+    public ResponseEntity<QueryResponse> queryGetSimple(@RequestParam("q") String question) {
+        try {
+            QueryResponse response = ragService.query(question);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("查询失败", e);
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
     @GetMapping("/stats")
     public ResponseEntity<?> getStats() {
         return ResponseEntity.ok(ragService.getStatistics());
